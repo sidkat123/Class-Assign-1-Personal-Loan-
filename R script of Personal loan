@@ -1,0 +1,203 @@
+---
+title: "Personal Loan - Assignment 1"
+author: "sidharth Khatua"
+date: "1 June 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r,warning=FALSE,message=FALSE}
+library(ggplot2)
+library(Amelia)
+library(caret)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(readxl)
+library(data.table)
+library(gridExtra)
+library(Amelia)
+library(GGally)
+library(DMwR)
+```
+
+##Background:								
+A relatively young bank is growing rapidly in terms of overall customer acquisition.Majority of these are Liability customers with varying sizes of relationship with the bank.The customer base of Asset customers is quite small, and the bank WANTS to grow this base rapidly to bring in more loan business. 								
+
+Specifically, it wants to explore ways of converting its liability customers to Personal Loan customers.					
+
+A campaign the bank ran for liability customers last year showed a healthy conversion rate of over 9% successes. This has encouraged the Retail Marketing department to devise smarter campaigns with better target marketing.								
+									
+##Analytics Objectives:								
+									
+1	While designing a new campaign, can we model the previous campaign's customer behavior to analyze what combination of parameters make a customer more likely to accept a personal loan?								
+									
+2	There are several special products / facilities the bank offers like CD and security accounts,online services, credit cards, etc. Can we spot any association among these for finding cross-selling opportunities?								
+
+
+```{r}
+#Import from Excel file
+personal_loan <- read_excel(file.choose(),sheet = 2)
+
+#Structue
+dim(personal_loan)
+glimpse(personal_loan)
+
+#Redining the column variables.
+names(personal_loan) <- tolower(names(personal_loan))
+#Delecting uniques var like ID and Zip code from the datset.
+personal_loan <- personal_loan[,-c(1,5)]
+```
+
+observation:
+5000 rows and 14 variables.
+Target variable: personal loan.
+ID and Zip code are unique variables.
+```{r}
+prop.table(table(personal_loan$`personal loan`))
+#90.4% 0
+#9.6% 1 - loan recieved
+```
+
+```{r}
+#Missingness of the data
+missmap(obj = personal_loan,y.at = c(1),y.labels = c(''))
+```
+
+Data frame has no missing variables
+
+```{r,fig.width=10,fig.height=10}
+personal_loan <- personal_loan %>% 
+  mutate(education=as.factor(education),
+         `personal loan`=as.factor(`personal loan`),
+         `securities account`=as.factor(`securities account`),
+         `cd account`=as.factor(`cd account`),
+         online=as.factor(online),
+         creditcard=as.factor(creditcard))
+
+#Numerical variable.
+#EDA Analysis:
+
+a <- ggplot(personal_loan,aes(age))+geom_histogram(fill='orange',color='black')+ggtitle('Age')
+
+b <- ggplot(personal_loan,aes(experience))+geom_histogram(color='black',fill='orange')+ggtitle('Experience')
+
+c <- ggplot(personal_loan,aes(income))+geom_histogram(color='black',fill='orange')+ggtitle('Income')#right sckewed
+
+d <- ggplot(personal_loan,aes(ccavg))+geom_histogram(color='black',fill='orange')+ggtitle('Ccavg')
+
+e <- ggplot(personal_loan,aes(mortgage))+geom_histogram(color='black',fill='orange')+ggtitle('Mortgage')
+
+grid.arrange(a,b,c,d,e,ncol=3)
+```
+
+Observation:
+Age is highly concentrate btw 35 years to 60 years.
+Income is Sckewed towards right with mean of approx 50
+Avg spending on Credit cards is also sckewed towards right which a mean spending of 1.
+Most of the people have opted 0 mortgage while purchasing the house.
+
+```{r,fig.height=10,fig.width=10}
+#Categorical variable
+f <- ggplot(personal_loan %>% group_by(family) %>% summarise(Count=n()))+
+  geom_bar(aes(family,Count),stat = 'identity',fill='red')+geom_label(aes(family,Count,label=Count))+ggtitle('Family')
+
+g <- ggplot(personal_loan %>% group_by(`personal loan`) %>% summarise(Count=n()))+
+  geom_bar(aes(`personal loan`,Count),stat = 'identity',fill='red')+geom_label(aes(`personal loan`,Count,label=Count))+ggtitle('Personal loan-Target variable')
+
+h <- ggplot(personal_loan %>% group_by(`securities account`) %>% summarise(Count=n()))+
+  geom_bar(aes(`securities account`,Count),stat = 'identity',fill='red')+geom_label(aes(`securities account`,Count,label=Count))+ggtitle('Security account')
+
+i <- ggplot(personal_loan %>% group_by(`cd account`) %>% summarise(Count=n()))+
+  geom_bar(aes(`cd account`,Count),stat = 'identity',fill='red')+geom_label(aes(`cd account`,Count,label=Count))+ggtitle('CD Account')
+
+grid.arrange(f,g,h,i)
+```
+
+Obervation:
+Family with 1 member are more often than others.
+People who have accepted the loan is very less compared to people who havent accepted the loan**(coversion rate is 10%)**
+People with no security deposit is more than people with security deposit.
+People with no Cd acoount is more than people with CD account.
+
+
+```{r}
+#Model Budling 
+
+sample <- createDataPartition(personal_loan$`personal loan`,times = 1,p = .8,list = FALSE)
+
+train.df <- personal_loan[sample,]
+test.df <- personal_loan[-sample,]
+
+```
+
+
+```{r}
+
+
+set.seed(101)
+getModelInfo()$knn$parameters
+#Used Smapling method as SMOTE(Synthetically minority oversampling technique)
+ctrl <- trainControl(method = 'cv',number = 5,sampling = 'smote')
+tune.grid <- expand.grid(k=seq(1,20,1))
+
+
+#KNN Classifier.
+model_knn <- train(`personal loan`~age+experience+income+ family,data=train.df,method= "knn",trControl=ctrl,tuneGrid=tune.grid)
+
+print(model_knn)#optimate value K = 6
+
+plot(model_knn,main='Accuracy Vs K neighbours')
+
+predict_knn <- predict.train(model_knn,newdata = test.df[,-10],type = 'raw')
+
+confusionMatrix(predict_knn,test.df$`personal loan`)
+
+```
+
+Observation:
+From the plot we can observe that At k= 6 highest accuracy of 85.7% have been achieved.
+Used SMOTE technique to resample the data to solve the imbalance problem.
+
+```{r,fig.width=10,fig.height=10}
+model_rpart <- train(`personal loan`~age+experience+income+ family,data=train.df,method= "rpart",trControl=ctrl,tuneLength=10)
+plot(model_rpart)
+
+model.rpart <- rpart(`personal loan`~age+experience+income+ family,data = train.df,method = 'class',parms = list(split='gini'))
+
+plotcp(model.rpart,minline = T)
+model.rpart <- prune(model.rpart,cp = .058)
+
+rattle::fancyRpartPlot(model.rpart,main = 'Decision Tree',sub = 'Using personal loan dataset',type = 4)
+
+predict.rpart <- predict.train(model_rpart,newdata = test.df[,-8],type = 'raw')
+
+confusionMatrix(predict.rpart,test.df$`personal loan`)
+
+#Variable Importance.
+plot(varImp(model_rpart))
+```
+
+#observation:
+Using Decision tree Rule have been generated which are as follows:
+1.Income <114 81% of the people did not accept the loan.
+2.Income >=144 & family size <2.5 15% of the poeple did not accept the loan.
+3.Income >=144 & family size >= 2.5 4% of the people did accept the loan.
+
+Conclusion: 
+people with higher income level and higher family size tend to accept the loan compared to the lower income levle and family size.Income level is an important variable while spliting the decision tree.
+
+```{r}
+getModelInfo()$glm$paramters
+model_glm <- train(`personal loan`~age+income+experience+family,data = train.df,method='glm',trControl = ctrl)
+library(broom)
+tidy(model_glm$finalModel)
+plot(varImp(model_glm))
+```
+
+```{r}
+accuracy=resamples(list(KNN=model_knn,Rpart=model_rpart,Logistic.reg=model_glm))
+accuracy$values
+```
+
